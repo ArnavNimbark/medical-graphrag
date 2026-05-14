@@ -1,0 +1,31 @@
+drug,interacts_with,effect
+Warfarin,Aspirin,Bleeding Risk
+Warfarin,Ibuprofen,Internal Bleeding
+Warfarin,Clopidogrel,Severe Bleeding
+Warfarin,Alcohol,Liver Complications
+Ibuprofen,Lisinopril,Kidney Risk
+Ibuprofen,Aspirin,Stomach Bleeding
+Ibuprofen,Metformin,Kidney Stress
+Metformin,Alcohol,Lactic Acidosis
+Metformin,Insulin,Hypoglycemia
+Sildenafil,Nitroglycerin,Dangerous Blood Pressure Drop
+Paracetamol,Alcohol,Liver Damage
+Aspirin,Clopidogrel,Excessive Bleeding
+Aspirin,Warfarin,Clotting Complications
+Clopidogrel,Heparin,Hemorrhage Risk
+Heparin,Warfarin,Blood Thinning Overload
+Nitroglycerin,Sildenafil,Severe Hypotension
+Lisinopril,Spironolactone,High Potassium Levels
+Spironolactone,Losartan,Hyperkalemia
+Losartan,Ibuprofen,Kidney Damage
+Insulin,Alcohol,Blood Sugar Crash
+Insulin,Metformin,Hypoglycemia
+Morphine,Alcohol,Respiratory Depression
+Diazepam,Alcohol,Severe Sedation
+Diazepam,Morphine,CNS Depression
+Fluoxetine,Tramadol,Serotonin Syndrome
+Tramadol,Alcohol,Dizziness
+Azithromycin,Warfarin,Bleeding Risk
+Ciprofloxacin,Metformin,Blood Sugar Fluctuation
+Prednisone,Ibuprofen,Ulcer Risk
+Prednisone,Warfarin,Bleeding Risk
