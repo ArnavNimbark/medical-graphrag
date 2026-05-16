@@ -26,11 +26,16 @@ model = genai.GenerativeModel("gemini-flash-latest")
 # AI REASONING FUNCTION
 # -----------------------------------
 
-def generate_reasoning(query, rag_results, graph_results):
+def generate_reasoning(query, rag_results=None, graph_results=None, mode="Hybrid GraphRAG"):
+    rag_results = rag_results or []
+    graph_results = graph_results or []
 
     prompt = f"""
 
 You are a medical AI assistant.
+
+Pipeline Mode:
+{mode}
 
 User Question:
 {query}
@@ -41,8 +46,8 @@ Traditional RAG Results:
 Graph Relationship Results:
 {graph_results}
 
-Using both semantic retrieval and graph relationships,
-generate a concise medical explanation.
+Generate a concise medical explanation using only the evidence available
+for this pipeline mode. If evidence is limited, say so clearly.
 
 Include:
 1. Main interaction risk

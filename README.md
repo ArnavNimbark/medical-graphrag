@@ -1,42 +1,63 @@
 # MedGraphRAG
 
-MedGraphRAG is a small Streamlit prototype for exploring drug-drug interactions with both semantic retrieval and graph-based retrieval.
+MedGraphRAG is a Streamlit prototype for comparing medical question-answering pipelines over drug interaction and PubMed-style medical text data.
 
-The app compares:
+The app now supports:
 
-- **Traditional RAG**: embeds short medical interaction notes with `sentence-transformers` and searches them with FAISS.
-- **GraphRAG**: builds a directed `networkx` graph from `data/drugs.csv` and returns explicit drug interaction edges.
-- **AI reasoning**: sends the user question, semantic results, and graph results to Gemini for a concise explanation.
-- **Graph visualization**: renders the interaction network inside Streamlit with `streamlit-agraph`.
+- **LLM-only baseline**: asks Gemini directly with no retrieved evidence.
+- **Basic RAG baseline**: searches local PubMed text files from `medical_docs/` with SentenceTransformers + FAISS.
+- **GraphRAG pipeline**: combines semantic retrieval with graph evidence from `data/drugs.csv`, with optional TigerGraph GraphRAG API integration.
+- **Metrics comparison**: estimates latency, tokens, cost, evidence count, and evaluation-based answer quality score for each pipeline.
+- **Explainability**: shows retrieved evidence, graph reasoning paths, interaction risk, confidence, and clinical recommendation panels.
+- **Interactive graph visualization**: expands detected drug relationships with PyVis.
 
-This is an educational prototype, not a clinical decision support system.
+This is an educational/research prototype, not a clinical decision support system.
 
 ## Project Structure
 
 ```text
 medical-graphrag/
-  app.py                         # Main Streamlit app
-  download_pubmed.py             # Optional PubMed-style article downloader
+  app.py                         # Main Streamlit comparison app
+  evaluation.py                  # Evaluation scoring helpers
+  tigergraph_client.py           # Optional TigerGraph GraphRAG API client
+  download_pubmed.py             # Downloads PubMed-style articles into medical_docs/
   data/
-    drugs.csv                    # Drug interaction graph source data
-    drug_docs.txt                # Small text corpus used by the prototype
+    drugs.csv                    # Small curated drug interaction graph
+    drug_docs.txt                # Legacy demo corpus
+    evaluation_questions.csv     # Small benchmark set with expected answer terms
   graph/
-    build_graph.py               # CLI script that prints graph nodes/edges
+    build_graph.py               # Prints graph nodes/edges
     visualize_graph.py           # Generates drug_graph.html with PyVis
   retrieval/
-    build_vectorstore.py         # Builds a demo FAISS index in memory
-    query_vectorstore.py         # CLI semantic search demo
-    query_graph.py               # CLI graph lookup demo
-    ai_reasoning.py              # Gemini reasoning helper used by app.py
-    gemini_reasoning.py          # Standalone Gemini reasoning demo
-  medical_docs/                  # Optional downloaded medical articles
+    ai_reasoning.py              # Gemini reasoning helper
+    document_store.py            # PubMed document loading, FAISS indexing, search
+    build_vectorstore.py         # Legacy in-memory FAISS demo
+    query_vectorstore.py         # Legacy CLI semantic search demo
+    query_graph.py               # Legacy CLI graph lookup demo
+    gemini_reasoning.py          # Standalone Gemini test/demo
+  medical_docs/                  # Downloaded PubMed-style .txt articles
 ```
 
-## Requirements
+## Current Status
 
-- Python 3.10+
-- A Gemini API key for AI reasoning
-- Enough disk space for Python ML dependencies such as FAISS, PyTorch, and sentence-transformers
+Done:
+
+- Downloaded PubMed-style dataset into `medical_docs/`.
+- App uses those local text files for Basic RAG retrieval.
+- App compares LLM-only, Basic RAG, and GraphRAG-style answers.
+- Local graph evidence comes from `data/drugs.csv`.
+- Gemini API key is read from `.env`.
+- Runtime metrics are shown in the UI.
+- Answer quality now uses `data/evaluation_questions.csv` instead of a pure heuristic.
+- `medical_docs/` has been loaded into the TigerGraph `MedicalGraphRAG` graph as raw `Document`/`Content` vertices.
+- Docker files are present for containerized app runs.
+
+Still improving:
+
+- TigerGraph GraphRAG extraction/rebuild can take a while after ingestion because it chunks, embeds, extracts entities, and builds graph communities.
+- The local graph is still a small curated CSV graph.
+- Token and cost metrics are estimates, not provider billing records.
+- The evaluation set is intentionally small; expand it for stronger research claims.
 
 ## Setup
 
@@ -53,86 +74,90 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root:
+Create `.env` in the project root:
 
 ```env
-GEMINI_API_KEY=your_api_key_here
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
-The `.env` file is ignored by git. If a real API key was ever committed or shared, rotate it before using the project again.
+Optional TigerGraph GraphRAG API settings:
 
-## Run the App
+```env
+TIGERGRAPH_GRAPHRAG_URL=http://localhost:8000
+TIGERGRAPH_GRAPH_NAME=MedicalGraphRAG
+TIGERGRAPH_USERNAME=tigergraph
+TIGERGRAPH_PASSWORD=tigergraph
+```
 
-From the `medical-graphrag` directory:
+If `TIGERGRAPH_GRAPHRAG_URL` is not set, the app automatically uses the local CSV graph fallback.
+
+## Dataset
+
+Download the PubMed-style text dataset:
+
+```powershell
+pip install datasets
+python download_pubmed.py
+```
+
+This creates `medical_docs/*.txt`. The Streamlit app loads up to 975 text files and builds a cached FAISS index from them on first run.
+
+## Run
 
 ```powershell
 streamlit run app.py
 ```
 
-Example questions:
+Useful test questions:
 
 - `Why is Warfarin dangerous with Aspirin?`
 - `Can Ibuprofen interact with Lisinopril?`
 - `What happens with Sildenafil and Nitroglycerin?`
+- `What complications occur when aspirin and ibuprofen are used together in cardiac patients?`
 
-## Utility Scripts
+## Docker
 
-Print graph nodes and edges:
-
-```powershell
-python graph/build_graph.py
-```
-
-Generate the standalone HTML graph:
+Build the app image:
 
 ```powershell
-python graph/visualize_graph.py
+docker build -t medical-graphrag -f dockerfile .
 ```
 
-Try semantic retrieval in the terminal:
+Run it:
 
 ```powershell
-python retrieval/query_vectorstore.py
+docker run --env-file .env -p 8501:8501 medical-graphrag
 ```
 
-Try graph lookup in the terminal:
+Then open:
 
-```powershell
-python retrieval/query_graph.py
+```text
+http://localhost:8501
 ```
 
-Test Gemini access:
+## Metrics
 
-```powershell
-python test_gemini.py
-```
+The comparison table reports:
 
-## Optional PubMed Data
+- `Latency (s)`: measured wall-clock time for each pipeline.
+- `Estimated Tokens`: rough character-based token estimate.
+- `Estimated Cost ($)`: rough cost estimate using a configurable placeholder rate.
+- `Evidence Items`: number of retrieved text snippets and graph facts.
+- `Answer Quality Score`: keyword coverage against the closest row in `data/evaluation_questions.csv`, plus an evidence bonus.
 
-`download_pubmed.py` downloads the first 1,000 examples from the Hugging Face `ccdv/pubmed-summarization` dataset and saves article text files under `medical_docs/`.
+These metrics are good for early project comparison, but not a substitute for a proper benchmark set.
 
-Install the optional dataset dependency if needed:
+## TigerGraph GraphRAG Ingestion
 
-```powershell
-pip install datasets
-```
+Current local TigerGraph status:
 
-Then run:
+- Graph: `MedicalGraphRAG`
+- Raw document load: completed for 975 PubMed-style files
+- Loaded objects: 975 `Document` vertices, 975 `Content` vertices, 975 `HAS_CONTENT` edges
+- GraphRAG rebuild: run from the UI/API after ingestion to create chunks, embeddings, entities, relationships, and communities
 
-```powershell
-python download_pubmed.py
-```
-
-The downloaded files are not currently wired into `app.py`; the app still uses the hardcoded demo documents and `data/drugs.csv`.
-
-## Current Limitations
-
-- The semantic retriever uses a tiny hardcoded corpus instead of the downloaded PubMed documents.
-- The FAISS index is rebuilt every time the app starts.
-- Drug detection is simple substring matching against graph node names.
-- The graph data is manually curated and small.
-- Gemini responses depend on `GEMINI_API_KEY` being configured.
+The app will call the TigerGraph API only when `TIGERGRAPH_GRAPHRAG_URL` is set. Otherwise it uses the local CSV graph fallback.
 
 ## Safety Note
 
-Drug interaction explanations generated by this app may be incomplete or incorrect. Use trusted medical references and qualified clinical judgment for real healthcare decisions.
+Generated drug interaction explanations can be incomplete or wrong. Use trusted medical references and qualified clinical judgment for real healthcare decisions.

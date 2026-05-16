@@ -1,10 +1,14 @@
 import streamlit as st
 import pandas as pd
 import networkx as nx
-from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
+from evaluation import load_evaluation_questions, score_answer_quality
 from retrieval.ai_reasoning import generate_reasoning
+from retrieval.document_store import (
+    build_vector_index as build_document_vector_index,
+    load_pubmed_documents as load_pubmed_document_store,
+    search_documents,
+)
+from tigergraph_client import query_tigergraph_graphrag
 
 # GRAPH IMPORTS
 from pyvis.network import Network
@@ -32,6 +36,24 @@ if "chat_history" not in st.session_state:
 if "conversation_context" not in st.session_state:
 
     st.session_state.conversation_context = ""
+
+
+def estimate_tokens(text):
+    return max(1, int(len(str(text)) / 4))
+
+
+def estimate_cost(tokens, cost_per_1k=0.00035):
+    return (tokens / 1000) * cost_per_1k
+
+
+@st.cache_data(show_spinner=False)
+def load_pubmed_documents(max_docs=975):
+    return load_pubmed_document_store(max_docs=max_docs)
+
+
+@st.cache_resource(show_spinner=False)
+def build_vector_index(documents):
+    return build_document_vector_index(documents)
 
 # ----------------------------
 # PAGE TITLE
@@ -66,24 +88,11 @@ for _, row in df.iterrows():
 # TRADITIONAL RAG
 # ----------------------------
 
-docs = [
-    "Warfarin and Aspirin together may increase bleeding risk.",
-    "Ibuprofen may reduce the effectiveness of Lisinopril and increase kidney complications.",
-    "Metformin combined with Alcohol may increase lactic acidosis risk.",
-    "Sildenafil and Nitroglycerin together can dangerously lower blood pressure.",
-    "Paracetamol and Alcohol together may increase liver damage risk.",
-    "Aspirin and Clopidogrel together may cause excessive bleeding."
-]
+docs, docs_source = load_pubmed_documents()
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
+model, index = build_vector_index(docs)
 
-embeddings = model.encode(docs)
-
-dimension = embeddings.shape[1]
-
-index = faiss.IndexFlatL2(dimension)
-
-index.add(np.array(embeddings))
+evaluation_df = load_evaluation_questions()
 
 # ----------------------------
 # SIDEBAR MEMORY
@@ -92,6 +101,11 @@ index.add(np.array(embeddings))
 with st.sidebar:
 
     st.header("Conversation Memory")
+
+    run_baselines = st.checkbox(
+        "Run baseline comparison",
+        value=True
+    )
 
     if st.button("Clear Memory"):
 
@@ -157,20 +171,26 @@ Current User Query:
 
     st.subheader("Traditional RAG")
 
-    query_embedding = model.encode([query])
-
-    distances, indices = index.search(
-        np.array(query_embedding),
-        3
+    st.caption(
+        f"Searching {len(docs)} documents from "
+        f"{'medical_docs/' if docs_source == 'pubmed' else 'fallback demo corpus'}."
     )
 
-    rag_results = []
+    rag_start = time.perf_counter()
 
-    for idx in indices[0]:
+    rag_results = search_documents(
+        query,
+        docs,
+        model,
+        index,
+        top_k=5
+    )
 
-        st.info(docs[idx])
+    for snippet in rag_results:
 
-        rag_results.append(docs[idx])
+        st.info(snippet)
+
+    rag_latency = time.perf_counter() - rag_start
 
     # ----------------------------
     # GRAPHRAG
@@ -179,6 +199,27 @@ Current User Query:
     st.subheader("GraphRAG")
 
     graph_results = []
+    tigergraph_response = None
+    tigergraph_error = None
+    graph_start = time.perf_counter()
+
+    try:
+        tigergraph_response = query_tigergraph_graphrag(query)
+    except Exception as exc:
+        tigergraph_error = str(exc)
+
+    if tigergraph_response:
+
+        st.success("TigerGraph GraphRAG API response")
+        st.write(tigergraph_response)
+        graph_results.append(tigergraph_response)
+
+    elif tigergraph_error:
+
+        st.warning(
+            "TigerGraph GraphRAG API is configured but did not return a response. "
+            "Using the local CSV graph fallback."
+        )
 
     detected_drugs = []
 
@@ -204,7 +245,7 @@ Current User Query:
 
                     effect = edge_data[key]["effect"]
 
-                    st.write(f"### {node} → {neighbor}")
+                    st.write(f"### {node} -> {neighbor}")
 
                     st.warning(f"Effect: {effect}")
 
@@ -212,9 +253,11 @@ Current User Query:
                         f"{node} interacts with {neighbor}. Effect: {effect}"
                     )
 
-    if not found:
+    if not found and not tigergraph_response:
 
         st.error("No graph relationships found.")
+
+    graph_latency = time.perf_counter() - graph_start
 
     # ----------------------------
     # BUILD SUBGRAPH
@@ -319,11 +362,16 @@ Current User Query:
 
                 time.sleep(0.7)
 
+            hybrid_start = time.perf_counter()
+
             ai_response = generate_reasoning(
                 contextual_query,
                 rag_results,
-                graph_results
+                graph_results,
+                mode="Hybrid GraphRAG"
             )
+
+            hybrid_latency = time.perf_counter() - hybrid_start
 
             # ----------------------------
             # STREAMING EFFECT
@@ -338,7 +386,7 @@ Current User Query:
                 streamed_text += char
 
                 response_placeholder.markdown(
-                    streamed_text + "▌"
+                    streamed_text + "|"
                 )
 
                 time.sleep(0.01)
@@ -348,6 +396,79 @@ Current User Query:
             )
 
             thinking_placeholder.empty()
+
+        # ----------------------------
+        # BASELINE COMPARISON + METRICS
+        # ----------------------------
+
+        if run_baselines:
+
+            st.markdown("---")
+
+            st.subheader("Pipeline Comparison")
+
+            llm_start = time.perf_counter()
+            llm_only_response = generate_reasoning(
+                query,
+                [],
+                [],
+                mode="LLM-only baseline"
+            )
+            llm_latency = time.perf_counter() - llm_start
+
+            basic_start = time.perf_counter()
+            basic_rag_response = generate_reasoning(
+                query,
+                rag_results,
+                [],
+                mode="Basic RAG baseline"
+            )
+            basic_latency = time.perf_counter() - basic_start
+
+            pipeline_outputs = [
+                ("LLM-only", llm_only_response, llm_latency, [], []),
+                ("Basic RAG", basic_rag_response, basic_latency + rag_latency, rag_results, []),
+                ("GraphRAG", ai_response, hybrid_latency + rag_latency + graph_latency, rag_results, graph_results),
+            ]
+
+            metrics_rows = []
+
+            for name, output, latency, rag_ctx, graph_ctx in pipeline_outputs:
+                evidence_count = len(rag_ctx) + len(graph_ctx)
+                token_estimate = estimate_tokens(
+                    f"{query}\n{rag_ctx}\n{graph_ctx}\n{output}"
+                )
+                answer_quality = score_answer_quality(
+                    query,
+                    output,
+                    rag_ctx + graph_ctx,
+                    evaluation_df
+                )
+
+                metrics_rows.append(
+                    {
+                        "Pipeline": name,
+                        "Latency (s)": round(latency, 2),
+                        "Estimated Tokens": token_estimate,
+                        "Estimated Cost ($)": round(estimate_cost(token_estimate), 6),
+                        "Evidence Items": evidence_count,
+                        "Answer Quality Score": answer_quality,
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(metrics_rows),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            with st.expander("View baseline answers"):
+                st.markdown("### LLM-only")
+                st.write(llm_only_response)
+                st.markdown("### Basic RAG")
+                st.write(basic_rag_response)
+                st.markdown("### GraphRAG")
+                st.write(ai_response)
 
         # ----------------------------
         # RISK ASSESSMENT
@@ -613,7 +734,7 @@ Current User Query:
 
                 for idx, path in enumerate(reasoning_paths[:6]):
 
-                    path_text = " → ".join(path)
+                    path_text = " -> ".join(path)
 
                     st.error(
                         f"""

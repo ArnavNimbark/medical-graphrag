@@ -32,7 +32,7 @@ if query_drug in G:
 
             effect = edge_data[key]["effect"]
 
-            print(f"{query_drug} → {neighbor}")
+            print(f"{query_drug} -> {neighbor}")
             print(f"Effect: {effect}\n")
 
 else:
