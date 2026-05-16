@@ -16,6 +16,11 @@ import streamlit.components.v1 as components
 import tempfile
 import time
 
+from utils.pdf_parser import (
+    extract_text_from_pdf,
+    detect_drugs
+)
+
 # ----------------------------
 # PAGE CONFIG
 # ----------------------------
@@ -60,6 +65,32 @@ def build_vector_index(documents):
 # ----------------------------
 
 st.title("MedGraphRAG")
+st.markdown("### Upload Prescription PDF")
+
+uploaded_pdf = st.file_uploader(
+    "Upload prescription",
+    type=["pdf"]
+)
+
+pdf_detected_drugs = []
+
+if uploaded_pdf:
+
+    with st.spinner("Analyzing prescription..."):
+
+        pdf_text = extract_text_from_pdf(uploaded_pdf)
+
+        pdf_detected_drugs = detect_drugs(pdf_text)
+
+    st.success("Prescription processed successfully")
+
+    st.markdown("### Detected Medications")
+
+    cols = st.columns(3)
+
+    for i, drug in enumerate(pdf_detected_drugs):
+
+        cols[i % 3].info(drug)
 st.subheader(
     "Conversational Drug Interaction Intelligence System"
 )
@@ -141,6 +172,12 @@ with st.sidebar:
 query = st.chat_input(
     "Ask a medical interaction question..."
 )
+if pdf_detected_drugs:
+
+    query = f"""
+Analyze interactions between:
+{", ".join(pdf_detected_drugs)}
+"""
 
 
 # ----------------------------
